@@ -3,8 +3,10 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
+from app.api.cron import router as cron_router
 from app.api.health import router as health_router
 from app.api.oauth import router as oauth_router
+from app.api.telegram import router as telegram_router
 from app.bot.bot import create_bot
 from app.config import settings
 from app.database.session import engine, init_db
@@ -22,7 +24,7 @@ async def lifespan(app: FastAPI):
     # 1. Initialize DB schema
     await init_db()
 
-    # 2. Setup Bot & Polling
+    # 2. Setup Bot & Polling / Webhook
     bot_task = None
     bot = None
     dp = None
@@ -30,15 +32,18 @@ async def lifespan(app: FastAPI):
         try:
             bot, dp = create_bot()
             scheduler_service.set_bot(bot)
-            await scheduler_service.start()
 
-            # Start Telegram bot polling in background task
-            bot_task = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
-            logger.info("Telegram bot polling started successfully.")
+            if settings.is_webhook_mode:
+                logger.info("Operating in Webhook/Serverless mode (Vercel). Continuous polling loop skipped.")
+            else:
+                await scheduler_service.start()
+                # Start Telegram bot polling in background task
+                bot_task = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
+                logger.info("Telegram bot polling started successfully.")
         except Exception as e:
-            logger.error(f"Failed to start Telegram bot polling: {e}", exc_info=True)
+            logger.error(f"Failed to initialize Telegram bot: {e}", exc_info=True)
     else:
-        logger.warning("TELEGRAM_BOT_TOKEN is not configured. Telegram bot polling skipped.")
+        logger.warning("TELEGRAM_BOT_TOKEN is not configured. Telegram bot initialization skipped.")
 
     yield
 
@@ -46,7 +51,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initiating graceful shutdown...")
     await scheduler_service.stop()
 
-    if dp and bot:
+    if dp and bot and not settings.is_webhook_mode:
         try:
             await dp.stop_polling()
             await bot.session.close()
@@ -74,6 +79,8 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(oauth_router)
+app.include_router(telegram_router)
+app.include_router(cron_router)
 
 
 if __name__ == "__main__":

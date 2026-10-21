@@ -13,6 +13,10 @@ class Settings(BaseSettings):
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = Field(default="", description="Telegram Bot API Token from @BotFather")
+    BOT_MODE: str = Field(default="auto", description="Bot run mode: 'auto', 'polling', or 'webhook'")
+    TELEGRAM_WEBHOOK_URL: str = Field(default="", description="Public base URL for Telegram webhook (e.g. https://my-app.vercel.app)")
+    TELEGRAM_WEBHOOK_SECRET: str = Field(default="", description="Optional secret token for verifying Telegram webhook updates")
+    CRON_SECRET: str = Field(default="", description="Optional secret token for verifying Vercel Cron requests")
     # NOTE: Declared as Union[str, List[int]] so pydantic-settings v2 does NOT
     # attempt to JSON-decode the raw env string before our validator runs.
     # The validator normalizes all formats (CSV string, list, int) into List[int].
@@ -138,6 +142,14 @@ class Settings(BaseSettings):
     @property
     def has_search_configured(self) -> bool:
         return bool(self.PERPLEXITY_API_KEY or (self.GOOGLE_SEARCH_API_KEY and self.GOOGLE_SEARCH_ENGINE_ID) or self.TAVILY_API_KEY)
+
+    @property
+    def is_webhook_mode(self) -> bool:
+        if self.BOT_MODE == "webhook":
+            return True
+        if self.BOT_MODE == "polling":
+            return False
+        return bool(os.getenv("VERCEL") or self.TELEGRAM_WEBHOOK_URL)
 
 
 # Global singleton instance

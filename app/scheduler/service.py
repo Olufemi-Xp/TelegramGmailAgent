@@ -46,5 +46,13 @@ class SchedulerService:
             except asyncio.CancelledError:
                 break
 
+    async def process_now(self):
+        """Processes due reminders immediately (for serverless cron jobs)."""
+        if not self._bot:
+            from app.bot.bot import create_bot
+            bot, _ = create_bot()
+            self._bot = bot
+        await process_due_reminders(self._bot)
+
 
 scheduler_service = SchedulerService()
