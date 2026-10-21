@@ -61,8 +61,9 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str = Field(default="local", description="Embedding provider: 'local', 'openrouter', or 'openai'")
     EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2", description="Embedding model name")
     EMBEDDING_DIMENSION: int = Field(default=384, description="Embedding vector dimension")
-    TRANSCRIPTION_PROVIDER: str = Field(default="openrouter", description="Transcription provider: 'openrouter', 'groq', 'openai', or 'none'")
-    TRANSCRIPTION_API_KEY: str = Field(default="", description="API key for transcription if different from OpenRouter")
+    TRANSCRIPTION_PROVIDER: str = Field(default="auto", description="Transcription provider: 'auto', 'openrouter', 'groq', 'openai', or 'none'")
+    TRANSCRIPTION_API_KEY: str = Field(default="", description="API key for transcription if different from OpenRouter/Groq")
+    GROQ_API_KEY: str = Field(default="", description="Groq API Key for free Whisper speech transcription")
     VISION_MODEL: str = Field(default="openai/gpt-4o-mini", description="Vision-capable model name on OpenRouter")
 
     # Operational & Budgets
