@@ -1,0 +1,188 @@
+{
+  "name": "Telegram AI Assistant - Gmail Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -200,
+        0
+      ],
+      "id": "telegram-trigger-node",
+      "name": "Telegram Trigger",
+      "webhookId": "tg-agent-trigger-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "QxC22Ii1aGl6HbRf",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message.text }}",
+        "options": {
+          "systemMessage": "=You are an executive AI Assistant on Telegram. You help the user manage and send emails through their connected Gmail account based on their instructions.\n\nUser details:\n- Telegram Chat ID: {{ $('Telegram Trigger').item.json.message.chat.id }}\n- Sender Name: {{ $('Telegram Trigger').item.json.message.from.first_name }} {{ $('Telegram Trigger').item.json.message.from.last_name || '' }}\n\nCore Directives:\n1. When the user instructs you to send an email, identify:\n   - Recipient email address ('To')\n   - Subject line ('Subject')\n   - Email content/body ('Message')\n2. If any critical detail (especially recipient email address) is missing or ambiguous, politely ask the user to clarify before sending.\n3. If all details are clear or confirmed, call the 'Send a message in Gmail' tool to send the email.\n4. Once sent, provide a clear, professional confirmation message summarizing the recipient and subject.\n5. If the user asks general questions or provides conversational input, respond helpfully and politely."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        120,
+        0
+      ],
+      "id": "ai-agent-core-node",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        0,
+        220
+      ],
+      "id": "groq-chat-model-node",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "6c18GLhnLggp3TLQ",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        160,
+        220
+      ],
+      "id": "window-memory-node",
+      "name": "Window Buffer Memory"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('To', 'Recipient email address', 'string') }}",
+        "subject": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Subject', 'Subject line of the email', 'string') }}",
+        "emailType": "text",
+        "message": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Message', 'The body text of the email to send', 'string') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        320,
+        220
+      ],
+      "id": "gmail-send-tool-node",
+      "name": "Send a message in Gmail",
+      "webhookId": "gmail-tool-call-webhook",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "EBZzEfucNgagxCGZ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        460,
+        0
+      ],
+      "id": "telegram-reply-node",
+      "name": "Reply to Telegram",
+      "credentials": {
+        "telegramApi": {
+          "id": "QxC22Ii1aGl6HbRf",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}
