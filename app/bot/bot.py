@@ -1,3 +1,4 @@
+from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from app.bot.handlers import (
@@ -19,7 +20,15 @@ from app.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+_cached_bot: Optional[Bot] = None
+_cached_dp: Optional[Dispatcher] = None
+
+
 def create_bot() -> tuple[Bot, Dispatcher]:
+    global _cached_bot, _cached_dp
+    if _cached_bot is not None and _cached_dp is not None:
+        return _cached_bot, _cached_dp
+
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
     dp = Dispatcher()
 
@@ -39,4 +48,6 @@ def create_bot() -> tuple[Bot, Dispatcher]:
     dp.include_router(documents_router)
     dp.include_router(chat_router)  # Catch-all text router
 
+    _cached_bot = bot
+    _cached_dp = dp
     return bot, dp
