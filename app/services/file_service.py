@@ -16,8 +16,20 @@ logger = get_logger(__name__)
 
 class FileGenerationService:
     def __init__(self, base_dir: Optional[str] = None):
-        self.base_dir = os.path.abspath(base_dir or os.path.join(settings.STORAGE_DIR, "temp"))
-        os.makedirs(self.base_dir, exist_ok=True)
+        # On Vercel (and other read-only serverless runtimes), /var/task is immutable.
+        # Only /tmp is writable. Detect serverless environment and redirect accordingly.
+        is_serverless = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+        if is_serverless:
+            self.base_dir = os.path.abspath(base_dir or "/tmp/storage/temp")
+        else:
+            self.base_dir = os.path.abspath(base_dir or os.path.join(settings.STORAGE_DIR, "temp"))
+        self._dir_ready = False  # Lazy: don't touch filesystem at import time
+
+    def _ensure_dir(self) -> None:
+        """Creates the storage directory on first use, not at import/instantiation time."""
+        if not self._dir_ready:
+            os.makedirs(self.base_dir, exist_ok=True)
+            self._dir_ready = True
 
     def _sanitize_filename(self, filename: str, default_ext: str = ".txt") -> str:
         # Strip path traversal and forbidden characters
@@ -41,6 +53,7 @@ class FileGenerationService:
         return full_path
 
     def generate_text_file(self, content: str, filename: str = "notes.txt") -> str:
+        self._ensure_dir()
         path = self._get_safe_path(filename)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -49,6 +62,7 @@ class FileGenerationService:
     def generate_csv_file(self, rows: List[Dict[str, str]], filename: str = "data.csv") -> str:
         if not rows:
             raise ValueError("No data provided to generate CSV.")
+        self._ensure_dir()
         path = self._get_safe_path(filename)
         fieldnames = list(rows[0].keys())
         with open(path, "w", newline="", encoding="utf-8") as f:
@@ -58,6 +72,7 @@ class FileGenerationService:
         return path
 
     def generate_pdf_report(self, title: str, paragraphs: List[str], filename: str = "report.pdf") -> str:
+        self._ensure_dir()
         path = self._get_safe_path(filename)
         doc = SimpleDocTemplate(path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
         styles = getSampleStyleSheet()
@@ -87,6 +102,7 @@ class FileGenerationService:
         return path
 
     def generate_docx_document(self, title: str, paragraphs: List[str], filename: str = "document.docx") -> str:
+        self._ensure_dir()
         path = self._get_safe_path(filename)
         doc = docx.Document()
         doc.add_heading(title, 0)
