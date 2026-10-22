@@ -54,5 +54,14 @@ class SchedulerService:
             self._bot = bot
         await process_due_reminders(self._bot)
 
+    async def process_inbox_now(self) -> dict:
+        """Processes inbox checks and due reminders immediately (for serverless cron jobs)."""
+        if not self._bot:
+            from app.bot.bot import create_bot
+            bot, _ = create_bot()
+            self._bot = bot
+        from app.scheduler.jobs import process_inbox_check
+        return await process_inbox_check(self._bot)
+
 
 scheduler_service = SchedulerService()

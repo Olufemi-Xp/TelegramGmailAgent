@@ -15,15 +15,26 @@ from app.config import settings
 from app.database.models import Base
 from app.logging_config import get_logger
 
+from sqlalchemy.pool import NullPool
+
 logger = get_logger(__name__)
 
-# Normalize sqlite URL to ensure directory exists
+is_serverless = bool(os.getenv("VERCEL") or settings.is_webhook_mode)
+
+# Normalize sqlite URL to ensure directory exists or redirect to /tmp in serverless
 db_url = settings.DATABASE_URL
 if db_url.startswith("sqlite+aiosqlite:///"):
-    path = db_url.replace("sqlite+aiosqlite:///", "")
-    dir_name = os.path.dirname(path)
-    if dir_name:
-        os.makedirs(dir_name, exist_ok=True)
+    if is_serverless:
+        # Vercel filesystem is read-only except /tmp
+        db_url = "sqlite+aiosqlite:////tmp/agent.db"
+    else:
+        path = db_url.replace("sqlite+aiosqlite:///", "")
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception:
+                pass
 
 engine_kwargs = {
     "echo": settings.DB_ECHO,
@@ -33,6 +44,9 @@ if not settings.is_postgres:
     engine_kwargs["connect_args"] = {"timeout": 30}
 else:
     engine_kwargs["pool_pre_ping"] = True
+    if is_serverless:
+        # Prevent connection pooling leaks in ephemeral serverless function instances
+        engine_kwargs["poolclass"] = NullPool
 
 engine: AsyncEngine = create_async_engine(
     db_url,

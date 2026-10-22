@@ -1,103 +1,108 @@
 # Deploying Telegram Personal AI Assistant on Vercel
 
-This guide walks you through deploying your personal AI assistant to **Vercel** serverless infrastructure with **Telegram Webhooks**, **Vercel Cron** for reminders, and **Cloud PostgreSQL**.
+This guide provides everything needed to deploy and run your personal AI assistant on **Vercel** serverless infrastructure using **Neon PostgreSQL** (or Supabase), **Telegram Webhooks**, and **Vercel Cron**.
 
 ---
 
-## 1. Architectural Highlights on Vercel
+## 1. Why Did the Previous Deployment Fail?
 
-1. **Serverless Execution**: Runs as a serverless ASGI application via `api/index.py` and `@vercel/python`.
-2. **Telegram Webhooks**: Automatically switches from polling to webhooks (`/api/telegram/webhook`) so updates are pushed instantly to Vercel without continuous long-polling loops.
-3. **Scheduled Reminders**: Scheduled via `vercel.json` Cron (`/api/cron/reminders`) executing every minute to process due reminders.
-4. **Cloud Database**: Uses a managed PostgreSQL database (e.g., [Neon.tech](https://neon.tech/) or [Supabase](https://supabase.com/)) with vector extension support.
+1. **Vercel Hobby Cron Frequency Restriction**:
+   Vercel Free (Hobby) accounts **strictly forbid** minute-by-minute or hourly cron expressions (`* * * * *` or `0 * * * *`). Deploying a project with a cron schedule faster than once a day causes Vercel to abort the deployment with a build error:
+   ```
+   Error: A Hobby plan is limited to running Cron Jobs once a day
+   ```
+   **Fix implemented:** `vercel.json` has been updated to use the Hobby-compliant daily schedule (`"schedule": "0 8 * * *"`).
+2. **Serverless Database Drivers & Connection Pooling**:
+   Standard Postgres connection strings from Neon (`postgresql://...` or `postgres://...`) look for synchronous drivers (`psycopg2`).
+   **Fix implemented:** `app/config.py` now automatically normalizes incoming URLs to `postgresql+asyncpg://` and switches connection pooling to `NullPool` on serverless instances to prevent connection leaks.
+3. **Trimmed Production Dependencies**:
+   `pytest` and development dependencies have been separated into `requirements-dev.txt`, reducing build duration and serverless bundle size.
 
 ---
 
-## 2. Step-by-Step Deployment Instructions
+## 2. Architecture & Secrets Design
 
-### Step 1: Provision a Free PostgreSQL Database (Neon)
+### A. 100% Environment-Variable Driven (No Local Files)
+- **No `credentials.json` or `token.json` files are ever used or required.**
+- All Gmail OAuth client credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`) are read directly from environment variables.
+- You can optionally set `GMAIL_REFRESH_TOKEN` directly in Vercel environment variables to authenticate Gmail without ever going through browser login!
 
-Vercel functions are stateless and ephemeral, requiring a persistent cloud database:
+### B. Hosted Database on Vercel (Neon Postgres)
+- SQLite cannot persist across serverless invocations on Vercel.
+- **Neon PostgreSQL** (or Supabase) is used for:
+  - **Conversational Memory**: Stored in `personal_memories` with semantic vector indexing.
+  - **Processed Email Tracking**: Stored in `processed_emails` to ensure you are never notified twice about the same email.
+  - **Draft Storage**: Stored in `email_drafts` and synchronized with Gmail.
+  - **Reminders & Audits**: Stored in `reminders` and `audit_events`.
 
-1. Sign up for free at **[neon.tech](https://neon.tech/)** (or Supabase).
-2. Create a new project (e.g., `telegram-assistant`).
-3. Under **Dashboard > Connection Details**, copy the **Direct connection string** (or pooled connection string):
-   ```
-   postgresql://user:password@ep-xyz.us-east-2.aws.neon.tech/neondb?sslmode=require
-   ```
-4. For SQLAlchemy async, replace `postgresql://` with `postgresql+asyncpg://`:
-   ```
-   postgresql+asyncpg://user:password@ep-xyz.us-east-2.aws.neon.tech/neondb?sslmode=require
-   ```
-
----
-
-### Step 2: Import Your GitHub Repository to Vercel
-
-1. Log in to **[Vercel Dashboard](https://vercel.com/dashboard)**.
-2. Click **Add New... > Project**.
-3. Under **Import Git Repository**, select `Olufemi-Xp/TelegramGmailAgent`.
-4. Keep the default Framework Preset as **Other**.
+### C. Telegram Webhooks vs. Polling
+- Long-polling is disabled on Vercel because serverless lambdas terminate after handling an HTTP request.
+- Telegram communicates with Vercel via **Webhooks** (`POST /api/telegram/webhook`).
+- A 1-click webhook registration endpoint is available at `/api/telegram/set-webhook`.
 
 ---
 
-### Step 3: Configure Vercel Environment Variables
+## 3. Environment Variables for Vercel Dashboard
 
-In the **Environment Variables** section of the Vercel project setup, add the following variables:
+In the **Vercel Dashboard > Project Settings > Environment Variables**, add the following:
 
-| Variable Name | Example / Value | Description |
+| Variable Name | Required | Example / Value | Purpose |
+| :--- | :--- | :--- | :--- |
+| `DATABASE_URL` | **Yes** | `postgresql+asyncpg://user:pass@ep-xyz.us-east-2.aws.neon.tech/neondb?ssl=require` | Hosted Neon PostgreSQL connection string. |
+| `TELEGRAM_BOT_TOKEN` | **Yes** | `8650420403:AAGY...` | Bot API token from [@BotFather](https://t.me/BotFather). |
+| `TELEGRAM_ALLOWED_USER_IDS` | **Yes** | `6400123091` | Your numeric Telegram User ID. Blocks unauthorized strangers. |
+| `BOT_MODE` | **Yes** | `webhook` | Tells the assistant to operate in serverless webhook mode. |
+| `TELEGRAM_WEBHOOK_URL` | **Yes** | `https://your-project.vercel.app` | Your deployed Vercel domain. |
+| `TELEGRAM_WEBHOOK_SECRET` | *Optional* | `random_secret_string_32_chars` | Secret token to authenticate Telegram webhook payloads. |
+| `OPENROUTER_API_KEY` | **Yes** | `sk-or-v1-...` | LLM reasoning API key from [OpenRouter](https://openrouter.ai/keys). |
+| `OPENROUTER_MODEL` | *Optional* | `openai/gpt-oss-120b` | Primary reasoning model. |
+| `OPENROUTER_FALLBACK_MODEL`| *Optional* | `meta-llama/llama-3.3-70b-instruct`| Fallback model for failover. |
+| `GROQ_API_KEY` | **Yes** | `gsk_...` | Free Whisper transcription from [console.groq.com](https://console.groq.com). |
+| `TRANSCRIPTION_PROVIDER` | **Yes** | `groq` | Directs voice note transcription to Groq Whisper. |
+| `ENCRYPTION_KEY` | **Yes** | `w_9w12M7O5E-8d_f1JzB4pA6kL3sV9tX2qY5mZ7nK1o=` | 32-byte Fernet key for encrypting sensitive credentials. |
+| `APP_ENV` | **Yes** | `production` | Set to production. |
+| `APP_TIMEZONE` | *Optional* | `Africa/Lagos` | Default user timezone. |
+
+#### Gmail Integration (Optional):
+| Variable Name | Required | Description |
 | :--- | :--- | :--- |
-| `DATABASE_URL` | `postgresql+asyncpg://user:pass@ep-xyz.neon.tech/neondb?sslmode=require` | Your Neon or Supabase connection string |
-| `TELEGRAM_BOT_TOKEN` | `8650420403:AA...` | Your Telegram Bot token from @BotFather |
-| `TELEGRAM_ALLOWED_USER_IDS` | `6400123091` | Your numeric Telegram user ID |
-| `BOT_MODE` | `webhook` | Explicitly enables webhook mode |
-| `TELEGRAM_WEBHOOK_URL` | `https://<your-project>.vercel.app` | Base URL of your deployed Vercel app |
-| `TELEGRAM_WEBHOOK_SECRET` | *(Optional, e.g. 32-char random string)* | Secret for validating webhook authenticity |
-| `OPENROUTER_API_KEY` | `sk-or-v1-...` | Your OpenRouter API key |
-| `OPENROUTER_MODEL` | `openai/gpt-oss-120b` | Primary reasoning model |
-| `OPENROUTER_FALLBACK_MODEL` | `meta-llama/llama-3.3-70b-instruct` | Automatic fallback model |
-| `ENCRYPTION_KEY` | `w_9w12M7O5E-8d_f1JzB4pA6kL3sV9tX2qY5mZ7nK1o=` | 32-byte Fernet key for token encryption |
-| `GROQ_API_KEY` | `gsk_...` | Free Whisper transcription from Groq |
-| `TRANSCRIPTION_PROVIDER` | `groq` | Set to `groq` for ultra-fast free voice transcription |
-| `TAVILY_API_KEY` | `tvly-...` | Web search API key |
-| `PERPLEXITY_API_KEY` | `pplx-...` | Deep research API key |
-| `APP_ENV` | `production` | Production mode |
-| `APP_TIMEZONE` | `Africa/Lagos` | Your local timezone |
+| `GOOGLE_CLIENT_ID` | Optional | OAuth 2.0 Client ID from Google Cloud Console. |
+| `GOOGLE_CLIENT_SECRET` | Optional | OAuth 2.0 Client Secret from Google Cloud Console. |
+| `GOOGLE_REDIRECT_URI` | Optional | `https://your-project.vercel.app/oauth/google/callback` |
+| `GMAIL_REFRESH_TOKEN` | Optional | Pre-generated refresh token to skip OAuth browser flow entirely. |
 
-*(If using Gmail integration)*:
-- `GOOGLE_CLIENT_ID`: `your-google-client-id`
-- `GOOGLE_CLIENT_SECRET`: `your-google-client-secret`
-- `GOOGLE_REDIRECT_URI`: `https://<your-project>.vercel.app/oauth/google/callback`
-
-Click **Deploy**.
+#### Research Search Providers (Optional):
+- `PERPLEXITY_API_KEY`: Perplexity AI API Key.
+- `TAVILY_API_KEY`: Tavily Search API Key.
 
 ---
 
-### Step 4: Run Initial Database Migration
+## 4. Step-by-Step Deployment Guide
 
-Once your Neon database connection string is ready, apply the database schema either:
+### Step 1: Create Free Neon PostgreSQL Database
+1. Go to **[neon.tech](https://neon.tech/)** and sign up for free.
+2. Click **Create Project** (e.g. `telegram-assistant`).
+3. Under **Dashboard > Connection Details**, copy the connection string.
+4. Replace `postgresql://` with `postgresql+asyncpg://`:
+   ```
+   postgresql+asyncpg://user:password@ep-xyz.us-east-2.aws.neon.tech/neondb?ssl=require
+   ```
 
-**Option A (Locally with Alembic)**:
-```powershell
-# Set your Neon DATABASE_URL temporarily
-$env:DATABASE_URL="postgresql+asyncpg://user:password@ep-xyz.neon.tech/neondb?sslmode=require"
-python -m alembic upgrade head
-```
+### Step 2: Push to GitHub & Deploy to Vercel
+1. Your repository is already linked to GitHub:
+   ```powershell
+   git push origin main
+   ```
+2. In **[Vercel Dashboard](https://vercel.com/dashboard)**, click **Add New... > Project** and import `Olufemi-Xp/TelegramGmailAgent`.
+3. Add the Environment Variables listed in Section 3 above.
+4. Click **Deploy**.
 
-**Option B (Automatic)**:
-The application calls `await init_db()` automatically on its first cold start, creating all tables and the pgvector extension if it does not already exist.
-
----
-
-### Step 5: Activate Telegram Webhook (One-Click)
-
-After Vercel finishes deploying (e.g. `https://telegram-gmail-agent.vercel.app`), configure Telegram to send updates to your Vercel URL by opening this URL in your web browser:
-
+### Step 3: Activate Telegram Webhook (1-Click)
+Once Vercel finishes deploying, open this URL in your web browser:
 ```
 https://<your-project>.vercel.app/api/telegram/set-webhook?url=https://<your-project>.vercel.app/api/telegram/webhook
 ```
-
-You will receive an immediate confirmation:
+You will receive an instant JSON confirmation:
 ```json
 {
   "status": "success",
@@ -106,16 +111,30 @@ You will receive an immediate confirmation:
 }
 ```
 
-To verify the webhook status at any time, open:
-```
-https://<your-project>.vercel.app/api/telegram/webhook-info
-```
-
 ---
 
-### Step 6: Verify Everything Live
+## 5. Cron Jobs & Inbox Monitoring on Vercel Free Plan
 
-1. Open your Telegram bot (`@xpgmailasst_bot`).
-2. Send `/start` — the bot should greet you with interactive buttons.
-3. Send a voice message — it will transcribe via Groq and answer back.
-4. Send `/status` — to verify database connectivity, memory count, and budget diagnostics.
+### Built-in Vercel Cron
+`vercel.json` is pre-configured with a daily morning cron:
+```json
+"crons": [
+  {
+    "path": "/api/cron/inbox",
+    "schedule": "0 8 * * *"
+  }
+]
+```
+Every day at 8:00 AM UTC, Vercel triggers `/api/cron/inbox`, which:
+1. Checks for unread Gmail emails.
+2. Deduplicates against `processed_emails` in Neon Postgres.
+3. Sends new email summaries to your Telegram bot.
+4. Delivers any due reminders.
+
+### Want Inbox Checks Every 10 or 15 Minutes for Free?
+Because Vercel limits the Hobby plan scheduler to once a day, you can get frequent automated checks completely free without upgrading to Vercel Pro:
+1. Go to **[cron-job.org](https://cron-job.org/)** (100% free web cron service).
+2. Create a new cron job:
+   - **URL**: `https://<your-project>.vercel.app/api/cron/inbox`
+   - **Schedule**: Every 10 or 15 minutes.
+3. Save. Your Vercel assistant will now monitor your Gmail inbox throughout the day!

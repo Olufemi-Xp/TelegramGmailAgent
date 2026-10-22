@@ -4,7 +4,9 @@ from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 import httpx
+from sqlalchemy import select
 from app.config import settings
+from app.database.models import EmailDraft, ProcessedEmail
 from app.database.repositories.oauth_repo import OAuthRepository
 from app.database.session import get_db_session
 from app.logging_config import get_logger
@@ -90,10 +92,40 @@ class GmailService:
             creds = await repo.get_credentials(user_id=user_id, provider="google_gmail")
 
         if not creds or not creds.get("access_token"):
-            raise RuntimeError("Gmail is not connected. Use /gmail to connect your Google account.")
+            if settings.GMAIL_REFRESH_TOKEN:
+                logger.info(f"Using GMAIL_REFRESH_TOKEN from environment for user {user_id}...")
+                token_url = "https://oauth2.googleapis.com/token"
+                payload = {
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "refresh_token": settings.GMAIL_REFRESH_TOKEN,
+                    "grant_type": "refresh_token",
+                }
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    resp = await client.post(token_url, data=payload)
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"Token refresh with GMAIL_REFRESH_TOKEN failed ({resp.status_code}): {resp.text}")
+                    data = resp.json()
+
+                new_access_token = data["access_token"]
+                expires_in = data.get("expires_in", 3600)
+                new_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+                async with get_db_session() as session:
+                    repo = OAuthRepository(session)
+                    await repo.save_credentials(
+                        user_id=user_id,
+                        access_token=new_access_token,
+                        refresh_token=settings.GMAIL_REFRESH_TOKEN,
+                        token_expiry=new_expiry,
+                        scopes=" ".join(GMAIL_SCOPES),
+                        provider="google_gmail",
+                    )
+                return new_access_token
+            raise RuntimeError("Gmail is not connected. Use /gmail to connect your Google account or provide GMAIL_REFRESH_TOKEN in environment.")
 
         token_expiry = creds.get("token_expiry")
-        refresh_token = creds.get("refresh_token")
+        refresh_token = creds.get("refresh_token") or settings.GMAIL_REFRESH_TOKEN
         now = datetime.now(timezone.utc)
 
         # Refresh if expired or expiring within 60s
@@ -224,6 +256,23 @@ class GmailService:
             data = resp.json()
 
         logger.info(f"Created Gmail draft id={data.get('id')} to='{to}' subject='{subject}' for user={user_id}")
+
+        # Persist draft to hosted database (Neon Postgres)
+        try:
+            async with get_db_session() as session:
+                draft_rec = EmailDraft(
+                    user_id=user_id,
+                    gmail_draft_id=data.get("id"),
+                    to_address=to,
+                    subject=subject,
+                    body_text=body,
+                    thread_id=thread_id,
+                    status="created"
+                )
+                session.add(draft_rec)
+        except Exception as e:
+            logger.warning(f"Could not persist EmailDraft to database: {e}")
+
         return {
             "draft_id": data.get("id"),
             "to": to,
@@ -231,6 +280,43 @@ class GmailService:
             "thread_id": thread_id,
             "message": "Draft created successfully in Gmail.",
         }
+
+    async def get_unprocessed_emails(self, user_id: int, max_results: int = 5) -> List[Dict[str, Any]]:
+        """Fetches unread emails from Gmail and filters out any already recorded in processed_emails table."""
+        messages = await self.search_messages(user_id=user_id, query="is:unread", max_results=max_results)
+        if not messages:
+            return []
+
+        msg_ids = [m["id"] for m in messages if m.get("id")]
+        async with get_db_session() as session:
+            stmt = select(ProcessedEmail.message_id).where(
+                ProcessedEmail.user_id == user_id,
+                ProcessedEmail.message_id.in_(msg_ids)
+            )
+            res = await session.execute(stmt)
+            already_processed = set(res.scalars().all())
+
+        new_messages = [m for m in messages if m.get("id") not in already_processed]
+        return new_messages
+
+    async def mark_emails_processed(self, user_id: int, messages: List[Dict[str, Any]]) -> None:
+        """Marks emails as processed in the hosted database."""
+        if not messages:
+            return
+        async with get_db_session() as session:
+            for m in messages:
+                try:
+                    record = ProcessedEmail(
+                        user_id=user_id,
+                        message_id=m["id"],
+                        thread_id=m.get("threadId"),
+                        from_address=m.get("from"),
+                        subject=m.get("subject"),
+                        snippet=m.get("snippet", "")[:1000],
+                    )
+                    session.add(record)
+                except Exception:
+                    pass
 
     # CRITICAL SECURITY INVARIANT:
     # Sending emails directly is strictly disabled in this release as per requirement:

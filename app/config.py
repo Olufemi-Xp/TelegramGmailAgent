@@ -60,6 +60,10 @@ class Settings(BaseSettings):
         default="http://localhost:8000/oauth/google/callback",
         description="OAuth2 Redirect URI registered in Google Cloud Console"
     )
+    GMAIL_REFRESH_TOKEN: str = Field(
+        default="",
+        description="Optional pre-generated Gmail refresh token from environment variables (bypasses browser login)"
+    )
 
     # Embeddings, Voice & Vision
     EMBEDDING_PROVIDER: str = Field(default="local", description="Embedding provider: 'local', 'openrouter', or 'openai'")
@@ -84,6 +88,24 @@ class Settings(BaseSettings):
     HOST: str = Field(default="0.0.0.0", description="FastAPI host")
     PORT: int = Field(default=8000, description="FastAPI port")
     STORAGE_DIR: str = Field(default="./storage", description="Base local storage directory")
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: Any) -> str:
+        """Normalizes PostgreSQL database URLs for asyncpg and serverless cloud databases (e.g. Neon, Supabase)."""
+        if not v or not isinstance(v, str):
+            return "sqlite+aiosqlite:///storage/agent.db"
+        v = v.strip()
+        # Ensure asyncpg dialect is specified for async SQLAlchemy
+        if v.startswith("postgres://"):
+            v = "postgresql+asyncpg://" + v[len("postgres://"):]
+        elif v.startswith("postgresql://") and not v.startswith("postgresql+asyncpg://"):
+            v = "postgresql+asyncpg://" + v[len("postgresql://"):]
+        
+        # asyncpg does not accept sslmode= query parameter, it expects ssl=
+        if "sslmode=" in v:
+            v = v.replace("sslmode=require", "ssl=require").replace("sslmode=prefer", "ssl=prefer")
+        return v
 
     @field_validator("TELEGRAM_ALLOWED_USER_IDS", mode="before")
     @classmethod

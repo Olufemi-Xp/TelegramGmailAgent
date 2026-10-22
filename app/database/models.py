@@ -299,3 +299,33 @@ class AuditEvent(Base):
     details = Column(JsonType, default=dict, nullable=False)
     ip_address = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class ProcessedEmail(Base):
+    __tablename__ = "processed_emails"
+
+    id = Column(GUID, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    message_id = Column(String(255), nullable=False, index=True)
+    thread_id = Column(String(255), nullable=True)
+    from_address = Column(String(255), nullable=True)
+    subject = Column(String(500), nullable=True)
+    snippet = Column(Text, nullable=True)
+    processed_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "message_id", name="uq_user_processed_email"),)
+
+
+class EmailDraft(Base):
+    __tablename__ = "email_drafts"
+
+    id = Column(GUID, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    gmail_draft_id = Column(String(255), nullable=True, index=True)
+    to_address = Column(String(255), nullable=False)
+    subject = Column(String(500), nullable=False)
+    body_text = Column(Text, nullable=False)
+    thread_id = Column(String(255), nullable=True)
+    status = Column(String(50), default="created", nullable=False)  # created, updated, discarded, sent
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
