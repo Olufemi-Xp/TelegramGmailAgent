@@ -60,7 +60,10 @@ async def set_webhook(request: Request, url: Optional[str] = None):
       or pass explicit URL: ?url=https://<your-app>.vercel.app/api/telegram/webhook
     """
     if not settings.TELEGRAM_BOT_TOKEN:
-        raise HTTPException(status_code=500, detail="TELEGRAM_BOT_TOKEN not configured")
+        return {
+            "status": "error",
+            "message": "TELEGRAM_BOT_TOKEN is not configured in environment variables",
+        }
 
     target_url = url or settings.TELEGRAM_WEBHOOK_URL
     if not target_url:
@@ -73,10 +76,10 @@ async def set_webhook(request: Request, url: Optional[str] = None):
     if not target_url.endswith("/api/telegram/webhook"):
         target_url = target_url.rstrip("/") + "/api/telegram/webhook"
 
-    bot, _ = get_bot_and_dp()
     secret = settings.TELEGRAM_WEBHOOK_SECRET or None
 
     try:
+        bot, _ = get_bot_and_dp()
         success = await bot.set_webhook(
             url=target_url,
             secret_token=secret,
@@ -89,20 +92,28 @@ async def set_webhook(request: Request, url: Optional[str] = None):
             "has_secret": bool(secret),
         }
     except Exception as e:
-        logger.error(f"Failed to set Telegram webhook: {e}")
-        raise HTTPException(status_code=500, detail=f"Telegram API error: {str(e)}")
+        logger.error(f"Failed to set Telegram webhook: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "message": str(e),
+        }
 
 
 @router.get("/webhook-info")
 async def webhook_info():
     """Queries current Telegram webhook status from Telegram Bot API."""
     if not settings.TELEGRAM_BOT_TOKEN:
-        raise HTTPException(status_code=500, detail="TELEGRAM_BOT_TOKEN not configured")
+        return {
+            "status": "error",
+            "message": "TELEGRAM_BOT_TOKEN is not configured in environment variables",
+        }
 
-    bot, _ = get_bot_and_dp()
     try:
+        bot, _ = get_bot_and_dp()
         info = await bot.get_webhook_info()
         return {
+            "status": "ok",
             "url": info.url,
             "has_custom_certificate": info.has_custom_certificate,
             "pending_update_count": info.pending_update_count,
@@ -112,18 +123,31 @@ async def webhook_info():
             "ip_address": info.ip_address,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Telegram API error: {str(e)}")
+        logger.error(f"Failed to get webhook info: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "message": str(e),
+        }
 
 
 @router.get("/delete-webhook")
 async def delete_webhook():
     """Deletes the webhook to switch back to local polling mode."""
     if not settings.TELEGRAM_BOT_TOKEN:
-        raise HTTPException(status_code=500, detail="TELEGRAM_BOT_TOKEN not configured")
+        return {
+            "status": "error",
+            "message": "TELEGRAM_BOT_TOKEN is not configured in environment variables",
+        }
 
-    bot, _ = get_bot_and_dp()
     try:
+        bot, _ = get_bot_and_dp()
         success = await bot.delete_webhook(drop_pending_updates=False)
         return {"status": "success" if success else "failed", "mode": "polling"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Telegram API error: {str(e)}")
+        logger.error(f"Failed to delete webhook: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "message": str(e),
+        }
