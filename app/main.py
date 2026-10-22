@@ -83,6 +83,25 @@ app.include_router(telegram_router)
 app.include_router(cron_router)
 
 
+@app.get("/", tags=["Root"])
+async def root():
+    """Root endpoint for status check and navigation."""
+    return {
+        "status": "online",
+        "app": "Personal AI Assistant",
+        "mode": "webhook" if settings.is_webhook_mode else "polling",
+        "docs": "/docs",
+        "health": "/health/live",
+        "telegram": "/api/telegram/webhook-info",
+    }
+
+
+@app.get("/api/health", tags=["Health"])
+async def api_health():
+    """Alias for /health/live."""
+    return {"status": "live", "app_env": settings.APP_ENV}
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", settings.PORT))
     uvicorn.run("app.main:app", host=settings.HOST, port=port, reload=False)

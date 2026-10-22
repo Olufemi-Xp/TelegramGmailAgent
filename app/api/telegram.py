@@ -52,7 +52,7 @@ async def telegram_webhook(
 
 
 @router.get("/set-webhook")
-async def set_webhook(url: Optional[str] = None):
+async def set_webhook(request: Request, url: Optional[str] = None):
     """Convenience endpoint to configure Telegram webhook with one click.
     
     Usage:
@@ -64,10 +64,11 @@ async def set_webhook(url: Optional[str] = None):
 
     target_url = url or settings.TELEGRAM_WEBHOOK_URL
     if not target_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing webhook URL. Set TELEGRAM_WEBHOOK_URL in environment or pass ?url=https://..."
-        )
+        # Fallback: derive base URL directly from incoming request
+        base = str(request.base_url).rstrip("/")
+        if request.headers.get("x-forwarded-proto") == "https" and base.startswith("http://"):
+            base = "https://" + base[7:]
+        target_url = base
 
     if not target_url.endswith("/api/telegram/webhook"):
         target_url = target_url.rstrip("/") + "/api/telegram/webhook"

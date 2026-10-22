@@ -28,6 +28,9 @@ dependencies = [
     "apscheduler>=3.10.4",
 ]
 
+[tool.vercel]
+entrypoint = "app.main:app"
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 

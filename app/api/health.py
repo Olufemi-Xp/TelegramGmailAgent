@@ -5,6 +5,7 @@ from app.database.session import check_db_health
 router = APIRouter(prefix="/health", tags=["Health"])
 
 
+@router.get("", status_code=status.HTTP_200_OK)
 @router.get("/live", status_code=status.HTTP_200_OK)
 async def liveness():
     """Liveness probe: verifies web server is up and responsive."""
